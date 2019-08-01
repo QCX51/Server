@@ -1,0 +1,183 @@
+﻿using System;
+using System.Text;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading.Tasks;
+using System.Threading;
+using System.IO;
+using System.Runtime.Serialization.Formatters.Binary;
+using System.Collections.Generic;
+using System.Runtime.Serialization;
+using Classes;
+
+namespace Classes
+{
+    /// <summary>
+    /// Copyright (C) 2017 Alain Eus Rivera
+    /// </summary>
+    internal static class TCPServer
+    {
+        #region Public Global Delegate
+        public delegate void OnDataAvailableHandler(Socket socket, byte[] data);
+        public delegate void OnSocketCloseHandler(Socket TCPServer, Socket TCPClient);
+        #endregion
+        #region Public Global Events
+        public static event EventHandler<Socket> OnSocketAccepted;
+        public static event OnSocketCloseHandler OnSocketClosed = delegate(Socket s, Socket c)
+        {
+            if (!TcpSockets.Contains(c)) return;
+            TcpSockets[TcpSockets.IndexOf(c)]?.Close();
+            TcpSockets[TcpSockets.IndexOf(c)] = null;
+            TcpSockets?.Remove(c);
+            Trace("Socket removed from list");
+        };
+        public static event OnDataAvailableHandler OnDataAvailable;
+        #endregion
+        #region Private Global Variables
+        private static Socket TcpServer = null;
+        #endregion
+        #region Public Global Vars
+        public static List<Socket> TcpSockets = new List<Socket>();
+        #endregion
+        /// <summary>
+        /// Start listening for incoming connections on a specific port
+        /// </summary>
+        /// <param name="PtNo">Port number</param>
+        /// <exception cref="SocketException"
+        public static void Start(int PtNo)
+        {
+            if (Socket.OSSupportsIPv6) { Start(IPAddress.IPv6Any, PtNo); }
+            else if (Socket.OSSupportsIPv4) { Start(IPAddress.Any, PtNo); }
+        }
+        /// <summary>
+        /// Start listening for incoming connections
+        /// </summary>
+        /// <param name="IPvX">Server IPv4|IPv6 Address</param>
+        /// <param name="PtNo">Server Port number</param>
+        public static void Start(IPAddress IPvX, int PtNo)
+        {
+            if (TcpServer?.IsBound == true)
+            { TcpServer?.Close(); TcpServer = null; Thread.Sleep(100); }
+            TcpServer = new Socket(SocketType.Stream, ProtocolType.Tcp)
+            {
+                DualMode = true,
+                ExclusiveAddressUse = true,
+                LingerState = new LingerOption(false, 0),
+                SendTimeout = 0,
+                ReceiveTimeout = 0,
+                NoDelay = true,
+                Ttl = 255,
+                UseOnlyOverlappedIO = true
+            };
+            IPEndPoint IPEP = new IPEndPoint(IPvX, PtNo);
+            try
+            {
+                TcpServer.Bind(IPEP);
+                TcpServer.Listen(-1);
+                Task.Run(() => BeginAccept());
+            }
+            catch (Exception ex)
+            { Trace($"TcpServer: {ex.Message}"); TcpServer?.Close(); }
+        }
+
+        private static void BeginAccept()
+        {
+            AsyncCallback AsCallback = new AsyncCallback(EndAccept);
+            try { TcpServer.BeginAccept(AsCallback, TcpServer); }
+            catch (Exception ex) { Trace($"BeginAccept: {ex.Message}"); }
+            finally { AsCallback = null; }
+        }
+
+        private static void EndAccept(IAsyncResult IAsResult)
+        {
+            if (TcpServer?.IsBound != true) { return; }
+            else { Task.Factory.StartNew(() => BeginAccept()); }
+            try { TcpSockets.Add(TcpServer.EndAccept(IAsResult)); }
+            catch (Exception ex) { Trace($"EndAccept: {ex.Message}"); return; }
+            Task.Run(() => BeginReceive(TcpSockets[TcpSockets.Count -1]));
+            OnSocketAccepted?.Invoke(TcpServer, TcpSockets[TcpSockets.Count - 1]);
+        }
+
+        private static byte[] GetFile(string FileName, out string Name)
+        {
+            using (FileStream fs = File.Open(FileName, FileMode.Open, FileAccess.Read))
+            {
+                Name = Path.GetFileName(fs.Name);
+                byte[] name = Encoding.Unicode.GetBytes("\u003C" + Name + "\u003E");
+                System.Windows.Forms.MessageBox.Show(name.Length.ToString());
+                byte[] data = new byte[fs.Length + name.Length];
+                name.CopyTo(data, 0);
+                fs.Read(data, name.Length, data.Length - name.Length);
+                return data;
+            }
+        }
+        
+        internal static void BeginSend(Socket TcpSocket, string FilePath)
+        {
+            try
+            {
+                if (TcpSocket?.Connected != true) { return; }
+                byte[] Bytes = GetFile(FilePath, out string FileName);
+                NetworkStream NetStream = new NetworkStream(TcpSocket);
+                BinaryFormatter formatter = new BinaryFormatter();
+                formatter.Serialize(NetStream, Bytes);
+            }
+            catch (Exception ex) { Trace($"BeginSend{ex.Message}"); }
+        }
+
+        internal static void BeginSend(Socket TcpSocket)
+        {
+            try
+            {
+                if (TcpSocket?.Connected != true) { return; }
+                NetworkStream NetStream = new NetworkStream(TcpSocket);
+                BinaryFormatter formatter = new BinaryFormatter();
+                byte[] XmlData = new byte[0];//XMLReader.GetXmlData(new byte[0], string.Empty);
+                using (MemoryStream memoryStream = new MemoryStream(XmlData))
+                { formatter.Serialize(NetStream, memoryStream); }
+            }
+            catch (Exception ex) { Trace($"BeginSend:{ex.Message}"); }
+        }
+
+        private static async void BeginReceive(Socket TcpSocket)
+        {
+            try
+            {
+                TcpSocket.Receive(new byte[0], 0, 0, SocketFlags.None);
+                if (TcpSocket?.Connected != true) { return; }
+                NetworkStream NetStream = new NetworkStream(TcpSocket);
+                BinaryFormatter formatter = new BinaryFormatter();
+                GetStremData(formatter.Deserialize(NetStream), TcpSocket);
+                await Task.Run(() => BeginReceive(TcpSocket));
+            }
+            catch { OnSocketClosed.Invoke(TcpServer, TcpSocket); }
+        }
+
+        private static void GetStremData(object StreamType, Socket TcpSocket)
+        {
+            if (StreamType is MemoryStream)
+            {
+                using (MemoryStream ms = StreamType as MemoryStream)
+                { OnDataAvailable?.Invoke(TcpSocket, ms.ToArray()); }
+            }
+        }
+
+        private static void WriteLogFile(string LogText)
+        {
+            string FilePath; FileStream LogFile;
+            FilePath = Path.Combine(Path.GetTempPath(), $"{Forms.Server.AppGUID}.log");
+            try { LogFile = File.Open(FilePath, FileMode.Append, FileAccess.Write); }
+            catch (Exception Ex) { Trace($"LogFile: {Ex.Message}"); return; }
+            LogText = LogText + Environment.NewLine;
+            byte[] LogBytes = Encoding.ASCII.GetBytes(LogText);
+            LogFile.Write(LogBytes, 0, LogBytes.Length);
+            LogFile.Close();
+        }
+
+        public static void Trace(string message)
+        {
+            foreach (System.Diagnostics.TraceListener debugger in System.Diagnostics.Debug.Listeners)
+            { debugger.WriteLine(message); }
+        }
+    }
+}

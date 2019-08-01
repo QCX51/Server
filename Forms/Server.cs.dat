@@ -1,0 +1,93 @@
+﻿using Server.Classes;
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Windows.Forms;
+using Server.Properties;
+
+namespace Server
+{
+    internal partial class Server : Form
+    {
+        internal static HostList PCList = new HostList();
+        internal Server()
+        {
+            InitializeComponent();
+        }
+
+        private void OnFormShown(object sender, EventArgs e)
+        {
+            ListPanel.Controls.Add(PCList);
+            //PCList.CellContentClick += List_CellContentClick;
+            //PCList.CellEndEdit += List_CellEndEdit;
+            PCList.CellDoubleClick += PCList_CellDoubleClick;
+            PCList.EditingControlShowing += List_EditingControlShowing;
+            PCList.TopLeftHeaderCell.Style.BackColor = System.Drawing.SystemColors.Control;
+            Registry.GetKeyData();
+            TcpServer.Start(IPAddress.Any, Settings.Default.PtNo);
+        }
+
+        private void PCList_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            
+        }
+
+        private void List_EditingControlShowing(object sender, DataGridViewEditingControlShowingEventArgs e)
+        {
+            if (e.Control is ComboBox)
+            {
+                ComboBox comboBox = (ComboBox)e.Control as ComboBox;
+                comboBox.SelectedValueChanged += ComboBox_SelectedValueChanged;
+                comboBox.Validated += ComboBox_Validated;
+                comboBox = null;
+            }
+            if (e.Control is TextBox)
+            {
+                TextBox textBox = (TextBox)e.Control as TextBox;
+                textBox.Validated += TextBox_Validated;
+                textBox.TextChanged += TextBox_TextChanged;
+            }
+        }
+        private void ComboBox_Validated(object sender, EventArgs e)
+        {
+            if (sender is ComboBox)
+            {
+                ComboBox comboBox = (ComboBox)sender as ComboBox;
+                comboBox.SelectedValueChanged -= ComboBox_SelectedValueChanged;
+                comboBox.Validated -= ComboBox_Validated;
+                comboBox = null;
+            }
+
+        }
+
+        private void TextBox_Validated(object sender, EventArgs e)
+        {
+            if (sender is TextBox)
+            {
+                TextBox textBox = (TextBox)sender as TextBox;
+                textBox.Validated -= new EventHandler(TextBox_Validated);
+                textBox.TextChanged -= new EventHandler(TextBox_TextChanged);
+                textBox = null;
+            }
+        }
+
+        private void ComboBox_SelectedValueChanged(object sender, EventArgs e)
+        {
+            if (sender is ComboBox)
+            {
+                ComboBox comboBox = (ComboBox)sender as ComboBox;
+                comboBox = null;
+            }
+        }
+        private void TextBox_TextChanged(object sender, EventArgs e)
+        {
+            if (sender is TextBox)
+            {
+                TextBox textBox = (TextBox)sender as TextBox;
+                if (textBox.TextLength >= 6) { textBox.Text = "00:00"; }
+                textBox = null;
+            }
+        }
+        
+    }
+}
